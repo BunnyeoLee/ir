@@ -367,7 +367,7 @@ function renderHeader(){
   $("#status-pill").innerHTML=S.ready&&!S.noDb&&S.loaded.cfg?`<span class="pill ${st.cls}"><span class="dot"></span>${st.label}</span>`:"";
   const items=[["gallery","갤러리"],["ranking","실시간 순위"],["portfolio","내 투자"]];
   if(S.isAdmin||S.cfg.status==="revealed")items.push(["stage","발표 화면"]);
-  if(S.isAdmin)items.push(["admin","관리자"]);
+  items.push(["admin",S.isAdmin?"관리자":"관리자 로그인"]);
   const html=items.map(([k,l])=>`<a href="#${k}" ${S.view===k?'aria-current="page"':""} class="${k==="admin"?"admin-link":""}">${l}</a>`).join("");
   const nav=$("#nav");if(nav.innerHTML!==html)nav.innerHTML=html;
 }
