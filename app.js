@@ -17,7 +17,7 @@ const FB={app:null,auth:null,fs:null};
 const S={
   ready:false,noDb:false,dbError:"",db:null,user:null,uid:null,isAdmin:false,canWrite:null,readOnly:false,assets:null,
   cfg:Object.assign({},DEFAULT_CFG),loaded:{cfg:false,teams:false,inv:false},
-  teams:new Map(),inv:new Map(),roster:new Map(),me:null,meLoaded:false,final:null,
+  teams:new Map(),inv:new Map(),roster:new Map(),claims:new Map(),sid:null,me:null,meLoaded:false,final:null,
   view:"gallery",cohortSel:null,rankSel:null,stageSel:"all",adminTab:"run",rosterQ:"",
   bgDraft:{},email:"",authError:"",summary:null,sumAt:0,sumErr:"",prevTotals:null,pulses:new Map(),barPrev:new Map(),lastHtml:"",ceremonyShown:false
 };
@@ -174,7 +174,7 @@ function amountsVisible(){
   return S.cfg.showLive;
 }
 function myState(){
-  const raw=S.uid?S.inv.get(S.uid):null;
+  const raw=S.sid?S.inv.get(S.sid):null;
   const r=raw?evalDoc(raw):{ok:true,entries:[],sum:0};
   const by=new Map(r.entries);
   return {raw,ok:r.ok,reason:r.reason,sum:r.ok?r.sum:0,by,remaining:Math.max(0,S.cfg.budget-(r.ok?r.sum:0))};
@@ -240,7 +240,8 @@ function onErr(e){
 let unsubs=[];let gated=null;
 function resubscribe(){
   unsubs.forEach(f=>{try{f()}catch(e){}});unsubs=[];stopGated();
-  S.loaded={cfg:false,teams:false,inv:false};S.inv=new Map();S.roster=new Map();S.me=null;S.meLoaded=false;
+  S.loaded={cfg:false,teams:false,inv:false};S.inv=new Map();S.roster=new Map();S.claims=new Map();S.me=null;S.meLoaded=false;
+  S.sid=S.isAdmin?null:(lsGet("ir-sid")||null);
   S.summary=null;S.final=null;S.dbError="";S.lastHtml="";S.prevTotals=null;
   const db=S.db;
   unsubs.push(db.doc("config/main").onSnapshot(s=>{
@@ -250,21 +251,48 @@ function resubscribe(){
     const m=new Map();q.docs.forEach(d=>{if(d.exists)m.set(d.id,normTeam(d.id,d.data()))});
     S.teams=m;S.loaded.teams=true;queueSummary();schedule();
   },onErr));
-  unsubs.push(db.doc("roster/"+S.uid).onSnapshot(s=>{S.me=s.exists?s.data():null;S.meLoaded=true;schedule()},onErr));
   if(S.isAdmin){
     unsubs.push(db.collection("investments").onSnapshot(q=>{
       const m=new Map();q.docs.forEach(d=>{if(d.exists)m.set(d.id,d.data())});
       S.inv=m;S.loaded.inv=true;queueSummary();schedule();
     },onErr));
-    unsubs.push(db.collection("roster").onSnapshot(q=>{
+    unsubs.push(db.collection("students").onSnapshot(q=>{
       const m=new Map();q.docs.forEach(d=>{if(d.exists)m.set(d.id,d.data())});S.roster=m;schedule();
     },()=>{}));
-  }else{
-    unsubs.push(db.doc("investments/"+S.uid).onSnapshot(s=>{
-      S.inv=new Map(s.exists?[[S.uid,s.data()]]:[]);S.loaded.inv=true;schedule();
-    },onErr));
+    unsubs.push(db.collection("claims").onSnapshot(q=>{
+      const m=new Map();q.docs.forEach(d=>{if(d.exists)m.set(d.id,d.data())});S.claims=m;schedule();
+    },()=>{}));
   }
+  subscribeStudent();
 }
+/* a logged-in student: claims/{학번}.uid is this device; the newest login wins */
+let stUnsubs=[];
+function subscribeStudent(){
+  stUnsubs.forEach(f=>{try{f()}catch(e){}});stUnsubs=[];
+  S.me=null;
+  if(!S.isAdmin)S.inv=new Map();
+  if(!S.sid){S.meLoaded=true;if(!S.isAdmin)S.loaded.inv=true;schedule();return}
+  S.meLoaded=false;if(!S.isAdmin)S.loaded.inv=false;
+  const sid=S.sid;const db=S.db;
+  const lost=()=>{if(S.sid===sid)studentLogout(true)};
+  stUnsubs.push(db.doc("claims/"+sid).onSnapshot(s=>{if(!s.exists||s.data().uid!==S.uid)lost()},lost));
+  stUnsubs.push(db.doc("students/"+sid).onSnapshot(s=>{
+    if(!s.exists){lost();return}
+    S.me=Object.assign({},s.data(),{sid});S.meLoaded=true;schedule();
+  },lost));
+  if(!S.isAdmin)stUnsubs.push(db.doc("investments/"+sid).onSnapshot(s=>{
+    S.inv=new Map(s.exists?[[sid,s.data()]]:[]);S.loaded.inv=true;schedule();
+  },()=>{S.loaded.inv=true;schedule()}));
+}
+function studentLogout(forced){
+  stUnsubs.forEach(f=>{try{f()}catch(e){}});stUnsubs=[];
+  S.sid=null;lsSet("ir-sid","");S.me=null;S.meLoaded=true;
+  if(!S.isAdmin){S.inv=new Map();S.loaded.inv=true}
+  S.lastHtml="";schedule();
+  if(forced)toast("다른 기기에서 같은 학번으로 로그인했거나 명단에서 빠져서 로그아웃됐어요.",true);
+}
+function normName(n){return String(n||"").replace(/\s+/g,"").toLowerCase()}
+function normNo(n){return String(n||"").replace(/[^0-9A-Za-z가-힣]/g,"").slice(0,30)}
 /* summary & final are readable by students only while amounts are public */
 function canReadResults(){return S.isAdmin||S.cfg.showLive||S.cfg.status==="revealed"}
 function stopGated(){if(gated){gated.forEach(f=>{try{f()}catch(e){}});gated=null}}
@@ -446,8 +474,7 @@ function topNotice(){
   if(S.readOnly)return `<div class="notice warn"><div class="ic">!</div><div class="body"><b>보기 전용으로 열려 있어요</b><p>투자하려면 선생님께 이 페이지의 ‘참여(Contributor)’ 권한을 요청하세요.</p></div></div>`;
   if(!S.uid)return `<div class="notice warn"><div class="ic">!</div><div class="body"><b>접속 중이에요</b><p>잠시만 기다려 주세요.</p></div></div>`;
   if(!S.me){
-    if(!c.cohorts.length)return `<div class="notice"><div class="ic">i</div><div class="body"><b>아직 갤러리가 열리지 않았어요</b><p>선생님이 갤러리와 팀을 등록하면 투자자 등록을 할 수 있어요.</p></div></div>`;
-    return `<div class="notice"><div class="ic">→</div><div class="body"><b>먼저 투자자로 등록하세요</b><p>이름과 소속 갤러리를 입력하면 ${won(c.budget)}의 투자금을 받아요.</p></div><div class="act"><button class="btn accent" data-act="register">투자자 등록</button></div></div>`;
+    return `<div class="notice"><div class="ic">→</div><div class="body"><b>로그인하고 투자하세요</b><p>아이디는 내 이름, 비밀번호는 내 학번이에요. 로그인하면 ${won(c.budget)}의 투자금을 받아요.</p></div><div class="act"><button class="btn accent" data-act="login">학생 로그인</button></div></div>`;
   }
   const ms=myState();
   if(!ms.ok)return `<div class="notice warn"><div class="ic">!</div><div class="body"><b>투자 기록에 문제가 있어요 (${esc(ms.reason)})</b><p>‘내 투자’에서 투자를 다시 조정하면 해결돼요.</p></div></div>`;
@@ -523,9 +550,9 @@ function viewGallery(){
     ${body}</section>`;
 }
 function investBtn(t,block,mine){
-  if(!S.me&&!S.isAdmin&&!block&&S.uid&&!S.readOnly)return `<button class="btn accent" data-act="register">등록 후 투자</button>`;
+  if(!S.me&&!S.isAdmin&&!block&&S.uid&&!S.readOnly)return `<button class="btn accent" data-act="login">로그인 후 투자</button>`;
   if(block)return `<button class="btn accent" disabled>투자하기</button>`;
-  if(!S.me)return `<button class="btn accent" data-act="register">등록 후 투자</button>`;
+  if(!S.me)return `<button class="btn accent" data-act="login">로그인 후 투자</button>`;
   return `<button class="btn accent" data-act="invest" data-id="${esc(t.id)}">${mine?"투자 조정":"투자하기"}</button>`;
 }
 function boardHtml(list,keyPrefix,big){
@@ -558,14 +585,14 @@ function viewPortfolio(){
   const c=S.cfg;const ms=myState();
   let body;
   if(!S.uid||S.readOnly){body=`<div class="empty"><h3>투자 기록을 저장할 수 없어요</h3><p>${!S.uid?"접속 중이에요. 잠시 후 다시 열어 주세요.":"선생님께 문의하세요."}</p></div>`}
-  else if(!S.me){body=`<div class="empty"><h3>아직 투자자로 등록하지 않았어요</h3><p>이름과 소속 갤러리, 우리 팀을 입력하면 ${won(c.budget)}의 투자금이 지급돼요.</p>${c.cohorts.length?`<button class="btn accent" data-act="register">투자자 등록</button>`:""}</div>`}
+  else if(!S.me){body=`<div class="empty"><h3>로그인이 필요해요</h3><p>아이디는 내 이름, 비밀번호는 내 학번이에요. 로그인하면 ${won(c.budget)}의 투자금이 지급돼요.</p><button class="btn accent" data-act="login">학생 로그인</button></div>`}
   else{
     const co=cohortById(S.me.cohortId);const own=S.teams.get(S.me.ownTeamId);
     const rows=[...ms.by].map(([tid,v])=>{const t=S.teams.get(tid);return {t,v}}).filter(x=>x.t).sort((a,b)=>b.v-a.v);
     body=`<div class="cols" style="margin-top:0">
-      <div class="panel"><h3>투자자 정보</h3><p class="desc">소속 갤러리와 팀은 투자 전까지만 바꿀 수 있어요.</p>
+      <div class="panel"><h3>투자자 정보</h3><p class="desc">이름·갤러리·팀이 다르면 선생님께 알려 주세요.</p>
         <dl class="kv"><dt>이름</dt><dd>${esc(S.me.name)}</dd><dt>학번</dt><dd>${esc(S.me.studentNo||"-")}</dd><dt>갤러리</dt><dd>${esc(cohortLabel(co))}</dd><dt>우리 팀</dt><dd>${own?esc(own.name):"없음"}</dd></dl>
-        <div class="btn-row"><button class="btn sm" data-act="register">정보 수정</button></div></div>
+        <div class="btn-row"><button class="btn sm" data-act="student-logout">로그아웃</button></div></div>
       <div class="panel"><h3>투자 지갑</h3><p class="desc">마감 전까지 언제든 금액을 조정할 수 있어요.</p>
         <dl class="kv"><dt>받은 투자금</dt><dd class="num">${won(c.budget)}</dd><dt>투자한 금액</dt><dd class="num">${won(ms.sum)}</dd><dt>남은 잔액</dt><dd class="num" style="color:var(--accent)">${won(ms.remaining)}</dd></dl>
         <div class="meter" style="height:8px;margin-top:14px"><i style="width:${Math.min(100,ms.sum/c.budget*100)}%"></i></div></div>
@@ -607,7 +634,7 @@ function viewStage(){
 
 /* ───────── admin ───────── */
 function viewAdmin(){
-  const tabs=[["run","운영"],["teams","갤러리·팀"],["results","결과"],["people","투자자"]];
+  const tabs=[["run","운영"],["teams","갤러리·팀"],["results","결과"],["people","학생 명단"]];
   const tab=S.adminTab;
   const inner={run:adminRun,teams:adminTeams,results:adminResults,people:adminPeople}[tab]();
   return `<section class="wrap mast" style="padding-bottom:0"><div class="eyebrow"><span>Admin</span><span>·</span><span>${STATUS[S.cfg.status].label}</span></div><h1>관리자</h1><p class="sub">${esc(S.cfg.title)}</p>
@@ -691,7 +718,8 @@ function adminRun(){
     [true,"펀딩 금액 정하기",`1인당 ${won(c.budget)} · 단위 ${won(c.unit)}`],
     [c.cohorts.length>0,"대상 학년·학과 갤러리 만들기",c.cohorts.length?c.cohorts.map(cohortLabel).join(", "):"아직 없음"],
     [S.teams.size>0,"모둠과 발표자료 등록",`${S.teams.size}팀 등록됨`],
-    [S.roster.size>0,"학생에게 사이트 주소 공유","학생은 로그인 없이 주소만 열면 돼요"],
+    [S.roster.size>0,"학생 명단 등록",`학생 명단 탭에서 학번·이름을 붙여넣어요 (현재 ${S.roster.size}명)`],
+    [S.claims.size>0,"학생에게 사이트 주소 공유","학생은 이름(아이디)과 학번(비밀번호)으로 로그인해요"],
     [idx>=1,"펀딩 시작","학생들이 실시간으로 투자해요"],
     [idx>=3,"마감 후 결과 발표","1위 팀을 공개해요"]
   ];
@@ -737,7 +765,7 @@ function adminResults(){
   const overall=rankList("all",st.agg);
   return `<div class="section-head" style="margin-top:6px"><div><h2>${st.frozen?"확정 결과":"실시간 결과"}</h2><p>${st.frozen?`마감 시점(${new Date(st.frozenAt||0).toLocaleString("ko-KR")})에 확정된 금액이에요.`:"학생들의 투자가 바로 반영되고 있어요."} 총 ${won(st.totalFunded)} · 투자자 ${st.investors}명</p></div>
     <div class="chips"><button class="btn" data-act="csv">결과 CSV 저장</button><button class="btn" data-go="stage">발표 화면</button></div></div>
-    ${st.flagged.length?`<div class="notice warn" style="margin:0 0 16px"><div class="ic">!</div><div class="body"><b>규칙에 맞지 않는 투자 기록 ${st.flagged.length}건은 집계에서 뺐어요</b><p>한도 초과, 자기 팀 투자 같은 기록이에요. ‘투자자’ 탭에서 확인할 수 있어요.</p></div></div>`:""}
+    ${st.flagged.length?`<div class="notice warn" style="margin:0 0 16px"><div class="ic">!</div><div class="body"><b>규칙에 맞지 않는 투자 기록 ${st.flagged.length}건은 집계에서 뺐어요</b><p>한도 초과, 자기 팀 투자 같은 기록이에요. ‘학생 명단’ 탭에서 확인할 수 있어요.</p></div></div>`:""}
     ${overall.some(t=>t.total>0)?`<h3 style="font-family:var(--f-display);margin:0 0 12px">1위 팀</h3>${winnersBlock(st.agg)}`:""}
     ${c.cohorts.map(co=>{const l=rankList(co.id,st.agg);return `<div class="section-head"><div><h2>${esc(cohortLabel(co))}</h2><p>${l.length}팀 · ${won(l.reduce((a,t)=>a+t.total,0))}</p></div></div>${l.length?boardHtml(l,"a"+co.id,false):`<div class="empty"><p>팀이 없어요.</p></div>`}`}).join("")}
     ${c.cohorts.length>1?`<div class="section-head"><div><h2>전체 순위</h2></div></div>${boardHtml(overall,"all",false)}`:""}`;
@@ -745,17 +773,102 @@ function adminResults(){
 function adminPeople(){
   const c=S.cfg;const q=S.rosterQ.trim().toLowerCase();
   const ids=new Set([...S.roster.keys(),...S.inv.keys()]);
-  const rows=[...ids].map(id=>{const r=S.roster.get(id)||{};const d=S.inv.get(id);const e=d?evalDoc(d):{ok:true,sum:0,entries:[]};
-    return {id,name:r.name||"(미등록)",no:r.studentNo||"",co:cohortById(r.cohortId||(d&&d.cohortId)),own:S.teams.get(r.ownTeamId||(d&&d.ownTeamId)),sum:e.ok?e.sum:0,n:e.entries.length,ok:e.ok,reason:e.reason,at:Number(d&&d.updatedAt)||Number(r.joinedAt)||0}})
-    .filter(r=>!q||r.name.toLowerCase().includes(q)||r.no.toLowerCase().includes(q))
-    .sort((a,b)=>(a.co?cohortLabel(a.co):"").localeCompare(b.co?cohortLabel(b.co):"","ko")||a.no.localeCompare(b.no,"ko",{numeric:true})||a.name.localeCompare(b.name,"ko"));
-  return `<div class="section-head" style="margin-top:6px"><div><h2>투자자 명단</h2><p>등록 ${S.roster.size}명 · 투자 완료 ${rows.filter(r=>r.sum>0).length}명 · 이름은 관리자에게만 보여요 · 기기를 바꾼 학생은 ‘기기 해제’ 후 다시 등록해요</p></div>
-    <input class="search" id="roster-q" type="search" placeholder="이름·학번 검색" value="${esc(S.rosterQ)}" aria-label="투자자 검색"></div>
-    ${rows.length?`<div class="table-wrap"><table><thead><tr><th>이름</th><th>학번</th><th>갤러리</th><th>우리 팀</th><th class="r">투자 금액</th><th class="r">잔액</th><th class="r">투자 팀 수</th><th>최근 활동</th><th></th></tr></thead><tbody>
-    ${rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(r.no||"-")}</td><td>${esc(r.co?cohortLabel(r.co):"-")}</td><td>${esc(r.own?r.own.name:"-")}</td><td class="r num">${r.ok?won(r.sum):`<span class="flag">${esc(r.reason)}</span>`}</td><td class="r num">${r.ok?won(c.budget-r.sum):"-"}</td><td class="r">${r.n}</td><td>${r.at?new Date(r.at).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"}):"-"}</td><td>${S.roster.has(r.id)?`<button class="btn sm ghost" data-act="release" data-id="${esc(r.id)}">기기 해제</button>`:""}</td></tr>`).join("")}
-    </tbody></table></div>`:`<div class="empty"><h3>아직 등록한 학생이 없어요</h3><p>학생에게 사이트 주소를 알려 주면 학생이 직접 투자자로 등록해요.</p></div>`}`;
+  const all=[...ids].map(sid=>{const r=S.roster.get(sid);const d=S.inv.get(sid);const e=d?evalDoc(d):{ok:true,sum:0,entries:[]};
+    return {sid,listed:!!r,name:r?r.name:"(명단에서 삭제됨)",no:r&&r.studentNo||sid,co:cohortById(r?r.cohortId:(d&&d.cohortId)),own:S.teams.get(r?r.ownTeamId:(d&&d.ownTeamId)),sum:e.ok?e.sum:0,n:e.entries.length,ok:e.ok,reason:e.reason,at:Number(d&&d.updatedAt)||0,on:S.claims.has(sid)}});
+  const rows=all.filter(r=>!q||r.name.toLowerCase().includes(q)||String(r.no).toLowerCase().includes(q))
+    .sort((a,b)=>(a.co?cohortLabel(a.co):"").localeCompare(b.co?cohortLabel(b.co):"","ko")||String(a.no).localeCompare(String(b.no),"ko",{numeric:true}));
+  return `<div class="section-head" style="margin-top:6px"><div><h2>학생 명단</h2><p>등록 ${S.roster.size}명 · 로그인 ${[...S.roster.keys()].filter(k=>S.claims.has(k)).length}명 · 투자 완료 ${all.filter(r=>r.sum>0).length}명 · 학생은 이름(아이디)과 학번(비밀번호)으로 로그인해요</p></div>
+    <div class="chips"><input class="search" id="roster-q" type="search" placeholder="이름·학번 검색" value="${esc(S.rosterQ)}" aria-label="학생 검색"><button class="btn primary" data-act="students-add" ${c.cohorts.length?"":"disabled"}>+ 명단 붙여넣기</button></div></div>
+    ${!c.cohorts.length?`<div class="notice warn" style="margin:0 0 16px"><div class="ic">!</div><div class="body"><b>먼저 ‘갤러리·팀’ 탭에서 갤러리를 만드세요</b><p>학생은 갤러리(학년·학과)에 속해야 해요.</p></div></div>`:""}
+    ${rows.length?`<div class="table-wrap"><table><thead><tr><th>학번</th><th>이름</th><th>갤러리</th><th>우리 팀</th><th>로그인</th><th class="r">투자 금액</th><th class="r">잔액</th><th class="r">투자 팀</th><th>최근 투자</th><th></th></tr></thead><tbody>
+    ${rows.map(r=>`<tr><td class="num">${esc(r.no)}</td><td>${esc(r.name)}</td><td>${esc(r.co?cohortLabel(r.co):"-")}</td><td>${esc(r.own?r.own.name:"-")}</td><td>${r.on?'<span class="own-badge">로그인함</span>':'<span class="muted">-</span>'}</td><td class="r num">${r.ok?won(r.sum):`<span class="flag">${esc(r.reason)}</span>`}</td><td class="r num">${r.ok?won(c.budget-r.sum):"-"}</td><td class="r">${r.n}</td><td>${r.at?new Date(r.at).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"}):"-"}</td><td><button class="btn sm ghost" data-act="student-edit" data-id="${esc(r.sid)}">${r.listed?"수정":"정리"}</button></td></tr>`).join("")}
+    </tbody></table></div>`:`<div class="empty"><h3>${S.roster.size?"검색 결과가 없어요":"학생 명단이 비어 있어요"}</h3><p>‘명단 붙여넣기’에서 갤러리를 고르고 학번·이름·팀을 한 줄에 한 명씩 붙여넣으세요. 엑셀에서 그대로 복사해도 돼요.</p></div>`}`;
 }
-
+function parseStudents(text,cohortId){
+  const teams=[...S.teams.values()].filter(t=>t.cohortId===cohortId);
+  const out=[],bad=[];const seen=new Set();
+  for(const raw of String(text||"").split(/\r?\n/)){
+    const line=raw.trim();if(!line)continue;
+    const toks=line.split(/\t|,|\s+/).map(x=>x.trim()).filter(Boolean);
+    const ni=toks.findIndex(t=>/\d/.test(t)&&normNo(t).length>=2);
+    if(ni<0||toks.length<2){bad.push(line);continue}
+    const no=normNo(toks[ni]);const rest=toks.filter((_,i)=>i!==ni);
+    const name=rest[0];const teamName=rest.slice(1).join(" ");
+    if(!name||name.length>20||seen.has(no)){bad.push(line);continue}
+    seen.add(no);
+    let team=null;
+    if(teamName){const k=normName(teamName);team=teams.find(t=>normName(t.name)===k)||teams.find(t=>normName(t.item)===k)||null}
+    out.push({sid:no,name,teamName,team});
+  }
+  return {out,bad};
+}
+function openStudentsImport(){
+  const c=S.cfg;
+  const m=openModal(headHtml("학생 명단 붙여넣기","한 줄에 한 명씩 학번, 이름, 팀(선택) 순서로 넣으세요.")+`
+    <div class="modal-body">
+      <div class="field"><label for="si-co">갤러리</label><select id="si-co">${c.cohorts.map(co=>`<option value="${esc(co.id)}" ${co.id===S.cohortSel?"selected":""}>${esc(cohortLabel(co))}</option>`).join("")}</select></div>
+      <div class="field"><label for="si-text">명단</label><textarea id="si-text" rows="9" placeholder="20301 김민준 1모둠&#10;20302 이서연 1모둠&#10;20303 박지호 2모둠"></textarea>
+        <span class="hint">엑셀에서 학번·이름·팀 열을 복사해 붙여넣어도 돼요. 팀 이름은 ‘갤러리·팀’에 등록한 이름과 같아야 자기 팀 투자가 막혀요.</span></div>
+      <div class="hint" id="si-preview"></div>
+      <div class="err" id="si-err"></div>
+    </div>
+    <div class="modal-foot"><button class="btn" data-close>취소</button><button class="btn primary" id="si-go" disabled>명단 저장</button></div>`,{wide:true});
+  const co=m.querySelector("#si-co"),ta=m.querySelector("#si-text"),pv=m.querySelector("#si-preview"),go=m.querySelector("#si-go"),err=m.querySelector("#si-err");
+  const update=()=>{
+    const {out,bad}=parseStudents(ta.value,co.value);
+    const noTeam=out.filter(x=>x.teamName&&!x.team);
+    const exists=out.filter(x=>S.roster.has(x.sid));
+    pv.innerHTML=out.length||bad.length?`<b>${out.length}명</b> 인식됨${exists.length?` · 이미 있는 학번 ${exists.length}명은 새 정보로 바뀌어요`:""}${noTeam.length?` · <span style="color:var(--warn)">팀 이름을 못 찾은 ${noTeam.length}명 (${esc(noTeam.slice(0,3).map(x=>x.name+":"+x.teamName).join(", "))}${noTeam.length>3?" …":""}) → 팀 없음으로 저장</span>`:""}${bad.length?` · <span style="color:var(--danger)">읽지 못한 줄 ${bad.length}개: ${esc(bad.slice(0,2).join(" / "))}</span>`:""}`:"";
+    go.disabled=!out.length;go.textContent=out.length?`${out.length}명 저장`:"명단 저장";
+  };
+  ta.addEventListener("input",update);co.addEventListener("change",update);
+  go.addEventListener("click",async()=>{
+    const {out}=parseStudents(ta.value,co.value);if(!out.length)return;
+    const locked=out.filter(x=>{const d=S.inv.get(x.sid);const r=S.roster.get(x.sid);return d&&evalDoc(d).sum>0&&r&&(r.cohortId!==co.value||(r.ownTeamId||"")!==(x.team?x.team.id:""))});
+    if(locked.length){err.textContent=`이미 투자한 학생의 갤러리·팀은 바꿀 수 없어요: ${locked.slice(0,3).map(x=>x.name).join(", ")}`;return}
+    go.disabled=true;go.textContent="저장 중…";
+    try{
+      for(let i=0;i<out.length;i+=400){
+        const b=writeBatch(FB.fs);
+        out.slice(i,i+400).forEach(x=>b.set(doc(FB.fs,"students",x.sid),{name:x.name,nameKey:normName(x.name),studentNo:x.sid,cohortId:co.value,ownTeamId:x.team?x.team.id:"",createdAt:Number((S.roster.get(x.sid)||{}).createdAt)||Date.now()}));
+        await withRetry(()=>b.commit());
+      }
+      S.cohortSel=co.value;closeModal();toast(`학생 ${out.length}명을 명단에 저장했어요`);
+    }catch(e){err.textContent=errMsg(e);go.disabled=false;go.textContent="다시 시도"}
+  });
+}
+function openStudentEdit(sid){
+  const r=S.roster.get(sid);const d=S.inv.get(sid);const spent=d?evalDoc(d).sum:0;
+  if(!r){ // investment left without a roster entry
+    confirmBox({title:"명단에 없는 투자 기록",text:`학번 ${esc(sid)}의 투자 기록을 지울까요?`,ok:"지우기",danger:true}).then(async ok=>{if(!ok)return;
+      try{const b=writeBatch(FB.fs);b.delete(doc(FB.fs,"investments",sid));b.delete(doc(FB.fs,"claims",sid));await withRetry(()=>b.commit());toast("지웠어요")}catch(e){toast(errMsg(e),true)}});
+    return;
+  }
+  const c=S.cfg;const locked=spent>0;
+  const teamOpts=cid=>`<option value="">팀 없음</option>`+[...S.teams.values()].filter(t=>t.cohortId===cid).map(t=>`<option value="${esc(t.id)}" ${r.ownTeamId===t.id?"selected":""}>${esc(t.name)}</option>`).join("");
+  const m=openModal(headHtml("학생 정보 수정",`학번 ${esc(sid)}`)+`
+    <div class="modal-body">
+      <div class="field"><label for="se-name">이름 (로그인 아이디)</label><input id="se-name" type="text" maxlength="20" value="${esc(r.name)}"></div>
+      <div class="field"><label for="se-co">갤러리</label><select id="se-co" ${locked?"disabled":""}>${c.cohorts.map(co=>`<option value="${esc(co.id)}" ${co.id===r.cohortId?"selected":""}>${esc(cohortLabel(co))}</option>`).join("")}</select></div>
+      <div class="field"><label for="se-team">우리 팀</label><select id="se-team" ${locked?"disabled":""}>${teamOpts(r.cohortId)}</select>${locked?`<span class="hint">이미 ${won(spent)}을 투자해서 갤러리·팀은 바꿀 수 없어요.</span>`:""}</div>
+      <div class="err" id="se-err"></div>
+    </div>
+    <div class="modal-foot"><button class="btn danger" id="se-del" style="margin-right:auto">명단에서 삭제</button><button class="btn" data-close>취소</button><button class="btn primary" id="se-go">저장</button></div>`);
+  m.querySelector("#se-co").addEventListener("change",e=>{m.querySelector("#se-team").innerHTML=teamOpts(e.target.value)});
+  m.querySelector("#se-go").addEventListener("click",async()=>{
+    const name=m.querySelector("#se-name").value.trim();const err=m.querySelector("#se-err");
+    if(!name){err.textContent="이름을 입력하세요.";return}
+    const cohortId=locked?r.cohortId:m.querySelector("#se-co").value;const ownTeamId=locked?(r.ownTeamId||""):m.querySelector("#se-team").value;
+    try{await withRetry(()=>S.db.doc("students/"+sid).set(Object.assign({},r,{name,nameKey:normName(name),cohortId,ownTeamId})));closeModal();toast("저장했어요")}
+    catch(e){err.textContent=errMsg(e)}
+  });
+  m.querySelector("#se-del").addEventListener("click",async()=>{
+    const ok=await confirmBox({title:"명단에서 삭제",text:`<b>${esc(r.name)}</b>(${esc(sid)})을 명단에서 지워요.${spent?` 이 학생의 투자 ${won(spent)}도 함께 지워져요.`:""}`,ok:"삭제",danger:true});
+    if(!ok)return;
+    try{const b=writeBatch(FB.fs);["students","claims","investments"].forEach(cn=>b.delete(doc(FB.fs,cn,sid)));await withRetry(()=>b.commit());toast("명단에서 삭제했어요")}
+    catch(e){toast(errMsg(e),true)}
+  });
+}
 /* ───────── modal framework ───────── */
 let modalClose=null;
 function openModal(html,{wide=false,onMount}={}){
@@ -792,55 +905,40 @@ function confirmBox({title,text,ok="확인",danger=false,typeToConfirm=""}){
 }
 
 /* ───────── student: register ───────── */
-function claimKey(cid,no){return (cid+"__"+no).replace(/[^\w가-힣-]/g,"_").slice(0,200)}
-function openRegister(){
-  const c=S.cfg;const me=S.me||{};const ms=myState();
-  const locked=ms.sum>0;
-  const coSel=me.cohortId&&cohortById(me.cohortId)?me.cohortId:(c.cohorts[0]&&c.cohorts[0].id);
-  const teamOpts=cid=>`<option value="">소속 팀 없음</option>`+[...S.teams.values()].filter(t=>t.cohortId===cid).sort((a,b)=>a.createdAt-b.createdAt).map(t=>`<option value="${esc(t.id)}" ${me.ownTeamId===t.id?"selected":""}>${esc(t.name)}${t.item?" · "+esc(t.item):""}</option>`).join("");
-  const m=openModal(headHtml(S.me?"투자자 정보 수정":"투자자 등록",`등록하면 ${won(c.budget)}의 가상 투자금을 받아요.`)+`
-    <form class="modal-body" id="reg-form" novalidate>
-      <div class="two"><div class="field"><label for="reg-name">이름</label><input id="reg-name" type="text" maxlength="20" value="${esc(me.name||"")}" required autofocus></div>
-      <div class="field"><label for="reg-no">학번</label><input id="reg-no" type="text" maxlength="20" value="${esc(me.studentNo||"")}" inputmode="numeric" required ${locked?"disabled":""}></div></div>
-      <div class="field"><label for="reg-co">소속 갤러리 (학년·학과)</label><select id="reg-co" ${locked?"disabled":""}>${c.cohorts.map(co=>`<option value="${esc(co.id)}" ${co.id===coSel?"selected":""}>${esc(cohortLabel(co))}</option>`).join("")}</select></div>
-      <div class="field"><label for="reg-team">우리 팀</label><select id="reg-team" ${locked?"disabled":""}>${teamOpts(coSel)}</select><span class="hint">${locked?"이미 투자해서 학번·갤러리·팀은 바꿀 수 없어요. 바꾸려면 모든 투자를 0원으로 조정하세요.":"우리 팀에는 투자할 수 없어요. 학번은 한 기기에서만 등록돼요."}</span></div>
-      <div class="err" id="reg-err"></div>
+function openLogin(){
+  const m=openModal(headHtml("학생 로그인","아이디는 내 이름, 비밀번호는 내 학번이에요.")+`
+    <form class="modal-body" id="lg-form" novalidate>
+      <div class="field"><label for="lg-name">아이디 (이름)</label><input id="lg-name" type="text" maxlength="20" autocomplete="off" placeholder="예: 김민준" autofocus></div>
+      <div class="field"><label for="lg-no">비밀번호 (학번)</label><input id="lg-no" type="password" maxlength="30" inputmode="numeric" autocomplete="off" placeholder="예: 20301"></div>
+      <div class="err" id="lg-err" role="alert"></div>
+      <span class="hint">다른 기기에서 로그인하면 그 기기로 옮겨 가요. 투자 기록은 그대로 이어져요.</span>
     </form>
-    <div class="modal-foot"><button class="btn" data-close>취소</button><button class="btn accent" id="reg-save">${S.me?"저장":"등록하고 투자금 받기"}</button></div>`);
-  m.querySelector("#reg-co").addEventListener("change",e=>{m.querySelector("#reg-team").innerHTML=teamOpts(e.target.value)});
-  const save=async()=>{
-    const btn=m.querySelector("#reg-save");const err=m.querySelector("#reg-err");err.textContent="";
-    const name=m.querySelector("#reg-name").value.trim();
-    const no=locked?String(me.studentNo||""):m.querySelector("#reg-no").value.trim();
-    const cohortId=locked?me.cohortId:m.querySelector("#reg-co").value;const ownTeamId=locked?(me.ownTeamId||""):m.querySelector("#reg-team").value;
+    <div class="modal-foot"><button class="btn" data-close>취소</button><button class="btn accent" id="lg-go">로그인</button></div>`);
+  const go=m.querySelector("#lg-go"),err=m.querySelector("#lg-err");
+  const submit=async()=>{
+    err.textContent="";
+    const name=m.querySelector("#lg-name").value.trim();const sid=normNo(m.querySelector("#lg-no").value);
     if(!name){err.textContent="이름을 입력하세요.";return}
-    if(!no){err.textContent="학번을 입력하세요.";return}
-    if(!cohortById(cohortId)){err.textContent="소속 갤러리를 선택하세요.";return}
-    btn.disabled=true;btn.textContent="저장 중…";
+    if(!sid){err.textContent="학번을 입력하세요.";return}
+    if(!S.uid){err.textContent="접속 중이에요. 잠시 후 다시 시도하세요.";return}
+    go.disabled=true;go.textContent="로그인 중…";
     try{
-      await enqueue("inv",()=>withRetry(()=>runTransaction(FB.fs,async tx=>{
-        const newId=claimKey(cohortId,no);
-        const cref=doc(FB.fs,"claims",newId);
-        const iref=doc(FB.fs,"investments",S.uid);
-        const [cs,is]=[await tx.get(cref),await tx.get(iref)];
-        if(cs.exists()&&cs.data().uid!==S.uid)throw new UserError("이미 다른 기기에서 등록된 학번이에요. 기기를 바꿨다면 선생님께 ‘기기 해제’를 요청하세요.");
-        const a=is.exists()&&is.data().alloc&&typeof is.data().alloc==="object"?is.data().alloc:{};
-        const spent=Object.values(a).reduce((x,v)=>x+(Number(v)||0),0);
-        if(spent>0&&(cohortId!==me.cohortId||ownTeamId!==(me.ownTeamId||"")||newId!==me.claimId))throw new UserError("이미 투자한 기록이 있어 학번·갤러리·팀을 바꿀 수 없어요.");
-        if(!cs.exists())tx.set(cref,{uid:S.uid,at:Date.now()});
-        if(me.claimId&&me.claimId!==newId)tx.delete(doc(FB.fs,"claims",me.claimId));
-        tx.set(doc(FB.fs,"roster",S.uid),{name,studentNo:no,cohortId,ownTeamId,claimId:newId,joinedAt:Number(me.joinedAt)||Date.now()});
-      })));
-      S.cohortSel=cohortId;closeModal();toast(S.me?"정보를 저장했어요":"등록 완료! 이제 투자할 수 있어요");
-    }catch(e){err.textContent=errMsg(e);btn.disabled=false;btn.textContent="다시 시도"}
+      await withRetry(()=>S.db.doc("claims/"+sid).set({uid:S.uid,name:normName(name),at:Date.now()}));
+      S.sid=sid;lsSet("ir-sid",sid);subscribeStudent();
+      closeModal();toast(`${name}님, 환영해요`);
+    }catch(e){
+      const c=String(e&&e.code||"");
+      err.textContent=c.includes("permission-denied")?"이름 또는 학번이 맞지 않아요. 선생님이 등록한 이름과 학번을 그대로 입력하세요.":errMsg(e);
+      go.disabled=false;go.textContent="로그인";
+    }
   };
-  m.querySelector("#reg-save").addEventListener("click",save);
-  m.querySelector("#reg-form").addEventListener("submit",e=>{e.preventDefault();save()});
+  go.addEventListener("click",submit);
+  m.querySelector("#lg-form").addEventListener("submit",e=>{e.preventDefault();submit()});
 }
 /* ───────── student: invest ───────── */
 function openInvest(tid){
   const t=S.teams.get(tid);if(!t)return;
-  if(!S.me){openRegister();return}
+  if(!S.me){openLogin();return}
   const block=investBlock(t);if(block){toast(block,true);return}
   const c=S.cfg;const ms=myState();
   const cur=ms.by.get(tid)||0;
@@ -886,11 +984,11 @@ function commitInvestment(teamId,amount){
   return enqueue("inv",()=>withRetry(()=>runTransaction(FB.fs,async tx=>{
     const c=S.cfg;
     if(c.status!=="open")throw new UserError("지금은 펀딩 기간이 아니에요.");
-    const me=S.me;if(!me)throw new UserError("먼저 투자자로 등록하세요.");
+    const me=S.me;if(!me||!S.sid)throw new UserError("먼저 로그인하세요.");
     const t=S.teams.get(teamId);if(!t)throw new UserError("삭제된 팀이에요.");
     const block=investBlock(t);if(block)throw new UserError(block);
     if(!Number.isInteger(amount)||amount<0||amount%c.unit!==0)throw new UserError(`${won(c.unit)} 단위로 입력하세요.`);
-    const ref=doc(FB.fs,"investments",S.uid);
+    const ref=doc(FB.fs,"investments",S.sid);
     const snap=await tx.get(ref);
     const cur=snap.exists()?snap.data():null;const alloc={};
     if(cur&&cur.alloc&&typeof cur.alloc==="object"){
@@ -1125,24 +1223,13 @@ async function resetAll(){
     toast(`투자 기록 ${ids.length}건을 지웠어요`);
   }catch(e){toast(errMsg(e),true)}finally{done()}
 }
-async function releaseDevice(uid){
-  const r=S.roster.get(uid)||{};
-  const ok=await confirmBox({title:"기기 해제",text:`<b>${esc(r.name||"이 학생")}</b>(${esc(r.studentNo||"-")})의 등록을 풀어요. 이 학생의 투자 기록도 함께 지워지고, 새 기기에서 같은 학번으로 다시 등록할 수 있어요.`,ok:"기기 해제",danger:true});
-  if(!ok)return;
-  try{
-    const b=writeBatch(FB.fs);
-    if(r.claimId)b.delete(doc(FB.fs,"claims",r.claimId));
-    b.delete(doc(FB.fs,"roster",uid));b.delete(doc(FB.fs,"investments",uid));
-    await withRetry(()=>b.commit());toast("기기를 해제했어요");
-  }catch(e){toast(errMsg(e),true)}
-}
 async function saveCsv(){
   const st=standings();const rows=[["갤러리","순위","팀","아이템","팀원","펀딩 금액","투자자 수"]];
   for(const co of S.cfg.cohorts)for(const t of rankList(co.id,st.agg))rows.push([cohortLabel(co),t.total>0?t.rank:"-",t.name,t.item,t.members,t.total,t.investors]);
-  rows.push([]);rows.push(["투자자","학번","갤러리","우리 팀","투자 금액","투자 내역"]);
-  const ids=new Set([...S.roster.keys(),...S.inv.keys()]);
+  rows.push([]);rows.push(["학번","이름","갤러리","우리 팀","로그인","투자 금액","투자 내역"]);
+  const ids=[...new Set([...S.roster.keys(),...S.inv.keys()])].sort((a,b)=>a.localeCompare(b,"ko",{numeric:true}));
   for(const id of ids){const r=S.roster.get(id)||{};const d=S.inv.get(id);const e=d?evalDoc(d):{ok:true,sum:0,entries:[]};
-    rows.push([r.name||"(미등록)",r.studentNo||"",cohortLabel(cohortById(r.cohortId||(d&&d.cohortId))),(S.teams.get(r.ownTeamId||(d&&d.ownTeamId))||{}).name||"",e.ok?e.sum:"무효("+e.reason+")",e.entries.map(([k,v])=>(S.teams.get(k)||{}).name+":"+v).join(" / ")])}
+    rows.push([id,r.name||"(명단 없음)",cohortLabel(cohortById(r.cohortId||(d&&d.cohortId))),(S.teams.get(r.ownTeamId||(d&&d.ownTeamId))||{}).name||"",S.claims.has(id)?"O":"",e.ok?e.sum:"무효("+e.reason+")",e.entries.map(([k,v])=>(S.teams.get(k)||{}).name+":"+v).join(" / ")])}
   const csv="﻿"+rows.map(r=>r.map(v=>{v=String(v==null?"":v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v}).join(",")).join("\n");
   const url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
   const a=document.createElement("a");a.href=url;a.download=`IR펀딩_결과_${new Date().toISOString().slice(0,10)}.csv`;document.body.appendChild(a);a.click();a.remove();
@@ -1216,7 +1303,10 @@ document.addEventListener("click",e=>{
     case "rank":S.rankSel=id;S.lastHtml="";schedule();break;
     case "stage":S.stageSel=id;S.lastHtml="";schedule();break;
     case "atab":S.adminTab=id;S.lastHtml="";schedule();break;
-    case "register":openRegister();break;
+    case "register":case "login":openLogin();break;
+    case "student-logout":studentLogout(false);toast("로그아웃했어요");break;
+    case "students-add":openStudentsImport();break;
+    case "student-edit":openStudentEdit(id);break;
     case "invest":openInvest(id);break;
     case "deck":openDeck(id);break;
     case "settings":openSettings();break;
@@ -1232,7 +1322,6 @@ document.addEventListener("click",e=>{
     case "bg-save":saveBudget();break;
     case "admin-login":adminLogin();break;
     case "admin-logout":adminLogout();break;
-    case "release":releaseDevice(id);break;
     case "reload":location.reload();break;
     case "csv":saveCsv();break;
     case "ceremony":showCeremony(false);break;

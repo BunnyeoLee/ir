@@ -47,46 +47,45 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 학번 점유: 한 학번(갤러리별)은 한 기기만 등록
-    match /claims/{id} {
-      allow get: if signedIn();
+    // 학생 명단: 관리자가 등록. 학생은 자기 학번으로 로그인한 동안 자기 것만 읽는다
+    function ownsSid(sid) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/claims/$(sid))
+        && get(/databases/$(database)/documents/claims/$(sid)).data.uid == request.auth.uid;
+    }
+    match /students/{sid} {
+      allow get: if isAdmin() || ownsSid(sid);
       allow list: if isAdmin();
-      allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['uid', 'at'])
-        && request.resource.data.uid == request.auth.uid;
-      allow delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
-      allow update: if false;
+      allow write: if isAdmin();
     }
 
-    // 투자자 명단: 본인과 관리자만 읽는다 (이름은 다른 학생에게 보이지 않음)
-    match /roster/{uid} {
-      allow read: if isAdmin() || isSelf(uid);
-      allow create, update: if isSelf(uid) && validRoster();
+    // 학생 로그인: 이름(아이디)과 학번(비밀번호)이 명단과 맞아야 이 기기로 로그인된다.
+    // 다른 기기에서 다시 로그인하면 그 기기로 옮겨 간다.
+    match /claims/{sid} {
+      allow get: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow list: if isAdmin();
+      allow create, update: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid', 'name', 'at'])
+        && request.resource.data.uid == request.auth.uid
+        && exists(/databases/$(database)/documents/students/$(sid))
+        && request.resource.data.name == get(/databases/$(database)/documents/students/$(sid)).data.nameKey;
       allow delete: if isAdmin();
-    }
-    function validRoster() {
-      let d = request.resource.data;
-      return d.keys().hasOnly(['name', 'studentNo', 'cohortId', 'ownTeamId', 'claimId', 'joinedAt'])
-        && d.name is string && d.name.size() > 0 && d.name.size() <= 20
-        && d.studentNo is string && d.studentNo.size() > 0 && d.studentNo.size() <= 20
-        && d.cohortId is string && d.ownTeamId is string && d.claimId is string
-        && getAfter(/databases/$(database)/documents/claims/$(d.claimId)).data.uid == request.auth.uid;
     }
 
-    // 투자 기록: 학생마다 문서 하나(자기 것만). 펀딩 진행 중에만 쓸 수 있다.
-    match /investments/{uid} {
-      allow read: if isAdmin() || isSelf(uid);
-      allow create, update: if isSelf(uid) && validInvestment();
+    // 투자 기록: 학번마다 문서 하나. 그 학번으로 로그인한 기기만, 펀딩 진행 중에만 쓴다.
+    match /investments/{sid} {
+      allow read: if isAdmin() || ownsSid(sid);
+      allow create, update: if ownsSid(sid) && validInvestment(sid);
       allow delete: if isAdmin();
     }
-    function validInvestment() {
+    function validInvestment(sid) {
       let d = request.resource.data;
-      let r = get(/databases/$(database)/documents/roster/$(request.auth.uid)).data;
+      let st = get(/databases/$(database)/documents/students/$(sid)).data;
       return exists(cfgPath()) && cfg().get('status', '') == 'open'
         && d.keys().hasOnly(['cohortId', 'ownTeamId', 'alloc', 'updatedAt'])
         && d.alloc is map && d.alloc.size() <= 100
-        && d.cohortId == r.cohortId
-        && d.ownTeamId == r.ownTeamId
+        && d.cohortId == st.cohortId
+        && d.ownTeamId == st.ownTeamId
         && !(d.ownTeamId in d.alloc);
     }
   }
