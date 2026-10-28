@@ -1,6 +1,8 @@
-import {firebaseConfig,ADMIN_EMAILS,SUMMARY_INTERVAL_SEC} from "./firebase-config.js";
+import * as CONF from "./firebase-config.js";
+const {firebaseConfig,ADMIN_EMAILS,SUMMARY_INTERVAL_SEC}=CONF;
+const ADMIN_LOGIN_DOMAIN=String(CONF.ADMIN_LOGIN_DOMAIN||"irfund.firebaseapp.com");
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import {getAuth,onAuthStateChanged,signInAnonymously,GoogleAuthProvider,signInWithPopup,signInWithRedirect,getRedirectResult,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {getAuth,onAuthStateChanged,signInAnonymously,GoogleAuthProvider,signInWithPopup,signInWithRedirect,getRedirectResult,signOut,signInWithEmailAndPassword} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {getFirestore,doc,collection,query,limit,getDoc,getDocs,setDoc,deleteDoc,onSnapshot,runTransaction,writeBatch} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 (function(){
 "use strict";
@@ -210,7 +212,7 @@ async function boot(){
     }
     const email=u.isAnonymous?"":String(u.email||"").toLowerCase();
     S.uid=u.uid;S.email=email;S.isAdmin=!!email&&ADMINS.includes(email);S.authError="";
-    if(email&&!S.isAdmin)toast(`${email}은(는) 관리자 목록에 없는 계정이에요. firebase-config.js와 firestore.rules에 추가하세요.`,true);
+    if(email&&!S.isAdmin)toast(`${adminName(email)}은(는) 관리자로 등록되지 않은 계정이에요.`,true);
     if(lastUid!==u.uid){lastUid=u.uid;resubscribe()}
     S.ready=true;S.lastHtml="";schedule();
   });
@@ -335,7 +337,7 @@ function render(){
     trackPulses();
     html=(S.dbError?`<div class="wrap"><div class="notice warn"><div class="ic">!</div><div class="body"><b>${esc(S.dbError)}</b></div></div></div>`:"")+
       (S.view==="admin"&&!S.isAdmin?viewAdminLogin:({gallery:viewGallery,ranking:viewRanking,portfolio:viewPortfolio,stage:viewStage,admin:viewAdmin}[S.view]||viewGallery))()+
-      `<footer class="foot wrap"><p>투자금은 수업용 가상 금액이에요 · 학생마다 자기 투자 기록만 저장되어 여러 명이 동시에 투자해도 금액이 섞이지 않아요</p><p>${S.isAdmin?`관리자 ${esc(S.email)} · <button class="linkbtn" data-act="admin-logout">로그아웃</button>`:`<a href="#admin">관리자 로그인</a>`}</p></footer>`;
+      `<footer class="foot wrap"><p>투자금은 수업용 가상 금액이에요 · 학생마다 자기 투자 기록만 저장되어 여러 명이 동시에 투자해도 금액이 섞이지 않아요</p><p>${S.isAdmin?`관리자 ${esc(adminName(S.email))} · <button class="linkbtn" data-act="admin-logout">로그아웃</button>`:`<a href="#admin">관리자 로그인</a>`}</p></footer>`;
   }
   if(html!==S.lastHtml){
     const ae=document.activeElement;let keep=null;
@@ -387,13 +389,33 @@ function viewAuthError(){
   return `<div class="wrap"><div class="mast"><div class="eyebrow">IR Demo Day</div><h1>접속하지 못했어요</h1></div>
   <div class="notice warn"><div class="ic">!</div><div class="body"><b>${esc(S.authError)}</b><p>문제가 계속되면 선생님께 알려 주세요.</p></div><div class="act"><button class="btn" data-act="reload">다시 시도</button></div></div></div>`;
 }
+function adminName(email){email=String(email||"");const suf="@"+ADMIN_LOGIN_DOMAIN.toLowerCase();return email.toLowerCase().endsWith(suf)?email.slice(0,-suf.length):email}
 function viewAdminLogin(){
-  return `<div class="wrap"><div class="mast"><div class="eyebrow">Admin</div><h1>관리자 로그인</h1><p class="sub">firebase-config.js와 firestore.rules에 등록한 선생님 구글 계정으로 로그인하세요.</p></div>
-  <div class="panel" style="max-width:520px">
-    ${S.email&&!S.isAdmin?`<div class="notice warn" style="margin:0 0 16px"><div class="ic">!</div><div class="body"><b>${esc(S.email)}은(는) 관리자로 등록되지 않았어요</b><p>다른 계정으로 로그인하거나 관리자 목록에 이 이메일을 추가하세요.</p></div></div>`:""}
-    <button class="btn primary lg" data-act="admin-login" style="width:100%">Google 계정으로 로그인</button>
-    <p class="muted" style="font-size:13px;margin:12px 0 0">학생은 로그인할 필요가 없어요. 이 기기에서 학생으로 등록한 기록이 있다면, 관리자 로그인 후에는 이 기기에서 그 학생 기록이 보이지 않아요.</p>
-  </div></div>`;
+  return `<div class="wrap"><div class="mast"><div class="eyebrow">Admin</div><h1>관리자 로그인</h1><p class="sub">관리자 아이디와 비밀번호를 입력하세요.</p></div>
+  <form class="panel" id="admin-form" style="max-width:420px;display:flex;flex-direction:column;gap:14px" novalidate>
+    ${S.email&&!S.isAdmin?`<div class="notice warn" style="margin:0"><div class="ic">!</div><div class="body"><b>${esc(adminName(S.email))}은(는) 관리자로 등록되지 않았어요</b><p>관리자 아이디로 다시 로그인하세요.</p></div></div>`:""}
+    <div class="field"><label for="ad-id">아이디</label><input id="ad-id" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" required></div>
+    <div class="field"><label for="ad-pw">비밀번호</label><input id="ad-pw" type="password" autocomplete="current-password" required></div>
+    <div class="err" id="ad-err" role="alert"></div>
+    <button class="btn primary lg" type="submit" id="ad-go">로그인</button>
+    <button class="linkbtn" type="button" data-act="admin-login" style="align-self:center;font-size:13px">구글 계정으로 로그인</button>
+    <p class="muted" style="font-size:13px;margin:0">학생은 로그인할 필요가 없어요. 이 기기에서 학생으로 등록한 기록이 있다면, 관리자 로그인 후에는 이 기기에서 그 학생 기록이 보이지 않아요.</p>
+  </form></div>`;
+}
+async function adminPasswordLogin(){
+  const idEl=$("#ad-id"),pwEl=$("#ad-pw"),err=$("#ad-err"),go=$("#ad-go");if(!idEl||!FB.auth)return;
+  const id=idEl.value.trim(),pw=pwEl.value;err.textContent="";
+  if(!id||!pw){err.textContent="아이디와 비밀번호를 입력하세요.";return}
+  const email=id.includes("@")?id:`${id}@${ADMIN_LOGIN_DOMAIN}`;
+  go.disabled=true;go.textContent="로그인 중…";
+  try{await signInWithEmailAndPassword(FB.auth,email,pw)}
+  catch(e){
+    const c=e&&e.code||"";
+    err.textContent=/invalid-credential|wrong-password|user-not-found|invalid-email|invalid-login/.test(c)?"아이디 또는 비밀번호가 맞지 않아요."
+      :c==="auth/operation-not-allowed"?"Firebase 콘솔 Authentication › 로그인 방법에서 ‘이메일/비밀번호’를 사용 설정해 주세요."
+      :c==="auth/too-many-requests"?"로그인 시도가 너무 많아요. 잠시 후 다시 시도하세요.":authErr(e);
+    go.disabled=false;go.textContent="로그인";
+  }
 }
 function masthead(){
   const c=S.cfg;const st=standings();const vis=amountsVisible();
@@ -1223,6 +1245,7 @@ document.addEventListener("input",e=>{
     S.bgDraft[e.target.id==="bg-budget"?"budget":"unit"]=e.target.value;render();
   }
 });
+document.addEventListener("submit",e=>{if(e.target.id==="admin-form"){e.preventDefault();adminPasswordLogin()}});
 document.addEventListener("keydown",e=>{
   if((e.target.id==="bg-budget"||e.target.id==="bg-unit")&&e.key==="Enter"){e.preventDefault();saveBudget()}
 });

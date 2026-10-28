@@ -6,16 +6,18 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ▼ 관리자(선생님) 구글 계정 이메일 (소문자). firebase-config.js 의 ADMIN_EMAILS 와 같게.
+    // ▼ 관리자 계정 (소문자). 아이디 admin 은 admin@irfund.firebaseapp.com 으로 로그인돼요.
+    //   firebase-config.js 의 ADMIN_EMAILS 와 같게 맞추세요.
     function adminEmails() {
-      return ['bnlee0525@gmail.com'];
+      return ['admin@irfund.firebaseapp.com', 'bnlee0525@gmail.com'];
     }
 
     function signedIn() { return request.auth != null; }
     function isAdmin() {
       return signedIn()
-        && request.auth.token.get('email_verified', false) == true
-        && request.auth.token.get('email', '').lower() in adminEmails();
+        && request.auth.token.get('email', '').lower() in adminEmails()
+        && (request.auth.token.get('email_verified', false) == true
+            || request.auth.token.get('firebase', {}).get('sign_in_provider', '') == 'password');
     }
     function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
     function cfgPath() { return /databases/$(database)/documents/config/main; }

@@ -14,9 +14,13 @@ export const firebaseConfig = {
   appId: "1:1077419221787:web:c877c848918a559edf29be"
 };
 
-// 2) 관리자(선생님) 구글 계정 이메일. 여러 명이면 쉼표로 추가하세요.
-//    firestore.rules 파일의 adminEmails() 목록과 똑같이 맞춰야 해요.
+// 2) 관리자 계정. firestore.rules 파일의 adminEmails() 목록과 똑같이 맞춰야 해요.
+//    아이디로 로그인하면 "아이디@ADMIN_LOGIN_DOMAIN" 계정으로 로그인돼요.
+//    (아이디 admin → admin@irfund.firebaseapp.com)
+//    비밀번호는 이 파일에 적지 않아요. Firebase 콘솔 › Authentication › 사용자에서 정해요.
+export const ADMIN_LOGIN_DOMAIN = "irfund.firebaseapp.com";
 export const ADMIN_EMAILS = [
+  "admin@irfund.firebaseapp.com",
   "bnlee0525@gmail.com"
 ];
 
