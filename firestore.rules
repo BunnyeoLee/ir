@@ -47,19 +47,40 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 학생 명단: 관리자가 등록. 학생은 자기 학번으로 로그인한 동안 자기 것만 읽는다
+    // 학생: 이름·학번으로 직접 회원가입. 같은 학번은 한 번만 가입된다.
     function ownsSid(sid) {
       return signedIn()
         && exists(/databases/$(database)/documents/claims/$(sid))
         && get(/databases/$(database)/documents/claims/$(sid)).data.uid == request.auth.uid;
     }
+    function validStudent(d, sid) {
+      return d.keys().hasOnly(['name', 'nameKey', 'studentNo', 'cohortId', 'ownTeamId', 'createdAt'])
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 20
+        && d.nameKey is string && d.nameKey.size() > 0
+        && d.studentNo == sid
+        && d.cohortId is string && d.ownTeamId is string;
+    }
+    function noInvestment(sid) {
+      let p = /databases/$(database)/documents/investments/$(sid);
+      return !exists(p) || get(p).data.alloc.size() == 0;
+    }
     match /students/{sid} {
       allow get: if isAdmin() || ownsSid(sid);
       allow list: if isAdmin();
-      allow write: if isAdmin();
+      // 가입: 같은 요청에서 이 기기가 그 학번으로 로그인(claims)해야 한다
+      allow create: if isAdmin() || (signedIn()
+        && validStudent(request.resource.data, sid)
+        && getAfter(/databases/$(database)/documents/claims/$(sid)).data.uid == request.auth.uid);
+      // 본인은 투자 전까지 갤러리·팀만 바꿀 수 있다
+      allow update: if isAdmin() || (ownsSid(sid)
+        && validStudent(request.resource.data, sid)
+        && request.resource.data.nameKey == resource.data.nameKey
+        && request.resource.data.name == resource.data.name
+        && noInvestment(sid));
+      allow delete: if isAdmin();
     }
 
-    // 학생 로그인: 이름(아이디)과 학번(비밀번호)이 명단과 맞아야 이 기기로 로그인된다.
+    // 로그인: 이름(아이디)과 학번(비밀번호)이 가입 정보와 맞아야 이 기기로 로그인된다.
     // 다른 기기에서 다시 로그인하면 그 기기로 옮겨 간다.
     match /claims/{sid} {
       allow get: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
@@ -67,8 +88,8 @@ service cloud.firestore {
       allow create, update: if signedIn()
         && request.resource.data.keys().hasOnly(['uid', 'name', 'at'])
         && request.resource.data.uid == request.auth.uid
-        && exists(/databases/$(database)/documents/students/$(sid))
-        && request.resource.data.name == get(/databases/$(database)/documents/students/$(sid)).data.nameKey;
+        && existsAfter(/databases/$(database)/documents/students/$(sid))
+        && request.resource.data.name == getAfter(/databases/$(database)/documents/students/$(sid)).data.nameKey;
       allow delete: if isAdmin();
     }
 

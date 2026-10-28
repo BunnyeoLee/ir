@@ -474,7 +474,7 @@ function topNotice(){
   if(S.readOnly)return `<div class="notice warn"><div class="ic">!</div><div class="body"><b>보기 전용으로 열려 있어요</b><p>투자하려면 선생님께 이 페이지의 ‘참여(Contributor)’ 권한을 요청하세요.</p></div></div>`;
   if(!S.uid)return `<div class="notice warn"><div class="ic">!</div><div class="body"><b>접속 중이에요</b><p>잠시만 기다려 주세요.</p></div></div>`;
   if(!S.me){
-    return `<div class="notice"><div class="ic">→</div><div class="body"><b>로그인하고 투자하세요</b><p>아이디는 내 이름, 비밀번호는 내 학번이에요. 로그인하면 ${won(c.budget)}의 투자금을 받아요.</p></div><div class="act"><button class="btn accent" data-act="login">학생 로그인</button></div></div>`;
+    return `<div class="notice"><div class="ic">→</div><div class="body"><b>회원가입하고 투자하세요</b><p>처음이면 이름과 학번으로 가입하고 ${won(c.budget)}의 투자금을 받아요. 가입했다면 이름(아이디)과 학번(비밀번호)으로 로그인하세요.</p></div><div class="act" style="display:flex;gap:8px"><button class="btn accent" data-act="signup">회원가입</button><button class="btn" data-act="login">로그인</button></div></div>`;
   }
   const ms=myState();
   if(!ms.ok)return `<div class="notice warn"><div class="ic">!</div><div class="body"><b>투자 기록에 문제가 있어요 (${esc(ms.reason)})</b><p>‘내 투자’에서 투자를 다시 조정하면 해결돼요.</p></div></div>`;
@@ -550,9 +550,9 @@ function viewGallery(){
     ${body}</section>`;
 }
 function investBtn(t,block,mine){
-  if(!S.me&&!S.isAdmin&&!block&&S.uid&&!S.readOnly)return `<button class="btn accent" data-act="login">로그인 후 투자</button>`;
+  if(!S.me&&!S.isAdmin&&!block&&S.uid&&!S.readOnly)return `<button class="btn accent" data-act="signup">가입 후 투자</button>`;
   if(block)return `<button class="btn accent" disabled>투자하기</button>`;
-  if(!S.me)return `<button class="btn accent" data-act="login">로그인 후 투자</button>`;
+  if(!S.me)return `<button class="btn accent" data-act="signup">가입 후 투자</button>`;
   return `<button class="btn accent" data-act="invest" data-id="${esc(t.id)}">${mine?"투자 조정":"투자하기"}</button>`;
 }
 function boardHtml(list,keyPrefix,big){
@@ -585,14 +585,14 @@ function viewPortfolio(){
   const c=S.cfg;const ms=myState();
   let body;
   if(!S.uid||S.readOnly){body=`<div class="empty"><h3>투자 기록을 저장할 수 없어요</h3><p>${!S.uid?"접속 중이에요. 잠시 후 다시 열어 주세요.":"선생님께 문의하세요."}</p></div>`}
-  else if(!S.me){body=`<div class="empty"><h3>로그인이 필요해요</h3><p>아이디는 내 이름, 비밀번호는 내 학번이에요. 로그인하면 ${won(c.budget)}의 투자금이 지급돼요.</p><button class="btn accent" data-act="login">학생 로그인</button></div>`}
+  else if(!S.me){body=`<div class="empty"><h3>회원가입 또는 로그인이 필요해요</h3><p>처음이면 이름과 학번으로 가입하세요. 가입하면 ${won(c.budget)}의 투자금이 지급돼요.</p><div class="btn-row" style="justify-content:center"><button class="btn accent" data-act="signup">회원가입</button><button class="btn" data-act="login">로그인</button></div></div>`}
   else{
     const co=cohortById(S.me.cohortId);const own=S.teams.get(S.me.ownTeamId);
     const rows=[...ms.by].map(([tid,v])=>{const t=S.teams.get(tid);return {t,v}}).filter(x=>x.t).sort((a,b)=>b.v-a.v);
     body=`<div class="cols" style="margin-top:0">
-      <div class="panel"><h3>투자자 정보</h3><p class="desc">이름·갤러리·팀이 다르면 선생님께 알려 주세요.</p>
+      <div class="panel"><h3>투자자 정보</h3><p class="desc">갤러리와 팀은 투자하기 전까지 바꿀 수 있어요.</p>
         <dl class="kv"><dt>이름</dt><dd>${esc(S.me.name)}</dd><dt>학번</dt><dd>${esc(S.me.studentNo||"-")}</dd><dt>갤러리</dt><dd>${esc(cohortLabel(co))}</dd><dt>우리 팀</dt><dd>${own?esc(own.name):"없음"}</dd></dl>
-        <div class="btn-row"><button class="btn sm" data-act="student-logout">로그아웃</button></div></div>
+        <div class="btn-row">${ms.sum>0?"":`<button class="btn sm" data-act="profile-edit">갤러리·팀 수정</button>`}<button class="btn sm" data-act="student-logout">로그아웃</button></div></div>
       <div class="panel"><h3>투자 지갑</h3><p class="desc">마감 전까지 언제든 금액을 조정할 수 있어요.</p>
         <dl class="kv"><dt>받은 투자금</dt><dd class="num">${won(c.budget)}</dd><dt>투자한 금액</dt><dd class="num">${won(ms.sum)}</dd><dt>남은 잔액</dt><dd class="num" style="color:var(--accent)">${won(ms.remaining)}</dd></dl>
         <div class="meter" style="height:8px;margin-top:14px"><i style="width:${Math.min(100,ms.sum/c.budget*100)}%"></i></div></div>
@@ -634,7 +634,7 @@ function viewStage(){
 
 /* ───────── admin ───────── */
 function viewAdmin(){
-  const tabs=[["run","운영"],["teams","갤러리·팀"],["results","결과"],["people","학생 명단"]];
+  const tabs=[["run","운영"],["teams","갤러리·팀"],["results","결과"],["people","가입 학생"]];
   const tab=S.adminTab;
   const inner={run:adminRun,teams:adminTeams,results:adminResults,people:adminPeople}[tab]();
   return `<section class="wrap mast" style="padding-bottom:0"><div class="eyebrow"><span>Admin</span><span>·</span><span>${STATUS[S.cfg.status].label}</span></div><h1>관리자</h1><p class="sub">${esc(S.cfg.title)}</p>
@@ -718,8 +718,7 @@ function adminRun(){
     [true,"펀딩 금액 정하기",`1인당 ${won(c.budget)} · 단위 ${won(c.unit)}`],
     [c.cohorts.length>0,"대상 학년·학과 갤러리 만들기",c.cohorts.length?c.cohorts.map(cohortLabel).join(", "):"아직 없음"],
     [S.teams.size>0,"모둠과 발표자료 등록",`${S.teams.size}팀 등록됨`],
-    [S.roster.size>0,"학생 명단 등록",`학생 명단 탭에서 학번·이름을 붙여넣어요 (현재 ${S.roster.size}명)`],
-    [S.claims.size>0,"학생에게 사이트 주소 공유","학생은 이름(아이디)과 학번(비밀번호)으로 로그인해요"],
+    [S.roster.size>0,"학생에게 사이트 주소 공유",`학생이 이름·학번으로 회원가입해요 (가입 ${S.roster.size}명)`],
     [idx>=1,"펀딩 시작","학생들이 실시간으로 투자해요"],
     [idx>=3,"마감 후 결과 발표","1위 팀을 공개해요"]
   ];
@@ -765,7 +764,7 @@ function adminResults(){
   const overall=rankList("all",st.agg);
   return `<div class="section-head" style="margin-top:6px"><div><h2>${st.frozen?"확정 결과":"실시간 결과"}</h2><p>${st.frozen?`마감 시점(${new Date(st.frozenAt||0).toLocaleString("ko-KR")})에 확정된 금액이에요.`:"학생들의 투자가 바로 반영되고 있어요."} 총 ${won(st.totalFunded)} · 투자자 ${st.investors}명</p></div>
     <div class="chips"><button class="btn" data-act="csv">결과 CSV 저장</button><button class="btn" data-go="stage">발표 화면</button></div></div>
-    ${st.flagged.length?`<div class="notice warn" style="margin:0 0 16px"><div class="ic">!</div><div class="body"><b>규칙에 맞지 않는 투자 기록 ${st.flagged.length}건은 집계에서 뺐어요</b><p>한도 초과, 자기 팀 투자 같은 기록이에요. ‘학생 명단’ 탭에서 확인할 수 있어요.</p></div></div>`:""}
+    ${st.flagged.length?`<div class="notice warn" style="margin:0 0 16px"><div class="ic">!</div><div class="body"><b>규칙에 맞지 않는 투자 기록 ${st.flagged.length}건은 집계에서 뺐어요</b><p>한도 초과, 자기 팀 투자 같은 기록이에요. ‘가입 학생’ 탭에서 확인할 수 있어요.</p></div></div>`:""}
     ${overall.some(t=>t.total>0)?`<h3 style="font-family:var(--f-display);margin:0 0 12px">1위 팀</h3>${winnersBlock(st.agg)}`:""}
     ${c.cohorts.map(co=>{const l=rankList(co.id,st.agg);return `<div class="section-head"><div><h2>${esc(cohortLabel(co))}</h2><p>${l.length}팀 · ${won(l.reduce((a,t)=>a+t.total,0))}</p></div></div>${l.length?boardHtml(l,"a"+co.id,false):`<div class="empty"><p>팀이 없어요.</p></div>`}`}).join("")}
     ${c.cohorts.length>1?`<div class="section-head"><div><h2>전체 순위</h2></div></div>${boardHtml(overall,"all",false)}`:""}`;
@@ -777,12 +776,12 @@ function adminPeople(){
     return {sid,listed:!!r,name:r?r.name:"(명단에서 삭제됨)",no:r&&r.studentNo||sid,co:cohortById(r?r.cohortId:(d&&d.cohortId)),own:S.teams.get(r?r.ownTeamId:(d&&d.ownTeamId)),sum:e.ok?e.sum:0,n:e.entries.length,ok:e.ok,reason:e.reason,at:Number(d&&d.updatedAt)||0,on:S.claims.has(sid)}});
   const rows=all.filter(r=>!q||r.name.toLowerCase().includes(q)||String(r.no).toLowerCase().includes(q))
     .sort((a,b)=>(a.co?cohortLabel(a.co):"").localeCompare(b.co?cohortLabel(b.co):"","ko")||String(a.no).localeCompare(String(b.no),"ko",{numeric:true}));
-  return `<div class="section-head" style="margin-top:6px"><div><h2>학생 명단</h2><p>등록 ${S.roster.size}명 · 로그인 ${[...S.roster.keys()].filter(k=>S.claims.has(k)).length}명 · 투자 완료 ${all.filter(r=>r.sum>0).length}명 · 학생은 이름(아이디)과 학번(비밀번호)으로 로그인해요</p></div>
-    <div class="chips"><input class="search" id="roster-q" type="search" placeholder="이름·학번 검색" value="${esc(S.rosterQ)}" aria-label="학생 검색"><button class="btn primary" data-act="students-add" ${c.cohorts.length?"":"disabled"}>+ 명단 붙여넣기</button></div></div>
-    ${!c.cohorts.length?`<div class="notice warn" style="margin:0 0 16px"><div class="ic">!</div><div class="body"><b>먼저 ‘갤러리·팀’ 탭에서 갤러리를 만드세요</b><p>학생은 갤러리(학년·학과)에 속해야 해요.</p></div></div>`:""}
-    ${rows.length?`<div class="table-wrap"><table><thead><tr><th>학번</th><th>이름</th><th>갤러리</th><th>우리 팀</th><th>로그인</th><th class="r">투자 금액</th><th class="r">잔액</th><th class="r">투자 팀</th><th>최근 투자</th><th></th></tr></thead><tbody>
-    ${rows.map(r=>`<tr><td class="num">${esc(r.no)}</td><td>${esc(r.name)}</td><td>${esc(r.co?cohortLabel(r.co):"-")}</td><td>${esc(r.own?r.own.name:"-")}</td><td>${r.on?'<span class="own-badge">로그인함</span>':'<span class="muted">-</span>'}</td><td class="r num">${r.ok?won(r.sum):`<span class="flag">${esc(r.reason)}</span>`}</td><td class="r num">${r.ok?won(c.budget-r.sum):"-"}</td><td class="r">${r.n}</td><td>${r.at?new Date(r.at).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"}):"-"}</td><td><button class="btn sm ghost" data-act="student-edit" data-id="${esc(r.sid)}">${r.listed?"수정":"정리"}</button></td></tr>`).join("")}
-    </tbody></table></div>`:`<div class="empty"><h3>${S.roster.size?"검색 결과가 없어요":"학생 명단이 비어 있어요"}</h3><p>‘명단 붙여넣기’에서 갤러리를 고르고 학번·이름·팀을 한 줄에 한 명씩 붙여넣으세요. 엑셀에서 그대로 복사해도 돼요.</p></div>`}`;
+  return `<div class="section-head" style="margin-top:6px"><div><h2>가입 학생</h2><p>가입 ${S.roster.size}명 · 투자 완료 ${all.filter(r=>r.sum>0).length}명 · 같은 학번은 한 번만 가입돼요. 잘못 가입한 학생은 ‘수정’에서 고치거나 삭제하세요.</p></div>
+    <div class="chips"><input class="search" id="roster-q" type="search" placeholder="이름·학번 검색" value="${esc(S.rosterQ)}" aria-label="학생 검색"></div></div>
+    ${!c.cohorts.length?`<div class="notice warn" style="margin:0 0 16px"><div class="ic">!</div><div class="body"><b>먼저 ‘갤러리·팀’ 탭에서 갤러리를 만드세요</b><p>갤러리가 있어야 학생이 가입할 수 있어요.</p></div></div>`:""}
+    ${rows.length?`<div class="table-wrap"><table><thead><tr><th>학번</th><th>이름</th><th>갤러리</th><th>우리 팀</th><th>접속</th><th class="r">투자 금액</th><th class="r">잔액</th><th class="r">투자 팀</th><th>최근 투자</th><th></th></tr></thead><tbody>
+    ${rows.map(r=>`<tr><td class="num">${esc(r.no)}</td><td>${esc(r.name)}</td><td>${esc(r.co?cohortLabel(r.co):"-")}</td><td>${esc(r.own?r.own.name:"-")}</td><td>${r.on?'<span class="own-badge">접속함</span>':'<span class="muted">-</span>'}</td><td class="r num">${r.ok?won(r.sum):`<span class="flag">${esc(r.reason)}</span>`}</td><td class="r num">${r.ok?won(c.budget-r.sum):"-"}</td><td class="r">${r.n}</td><td>${r.at?new Date(r.at).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"}):"-"}</td><td><button class="btn sm ghost" data-act="student-edit" data-id="${esc(r.sid)}">${r.listed?"수정":"정리"}</button></td></tr>`).join("")}
+    </tbody></table></div>`:`<div class="empty"><h3>${S.roster.size?"검색 결과가 없어요":"아직 가입한 학생이 없어요"}</h3><p>학생에게 사이트 주소를 알려 주세요. 학생이 이름·학번·갤러리·우리 팀을 넣고 회원가입하면 여기에 나타나요.</p></div>`}`;
 }
 function parseStudents(text,cohortId){
   const teams=[...S.teams.values()].filter(t=>t.cohortId===cohortId);
@@ -905,35 +904,82 @@ function confirmBox({title,text,ok="확인",danger=false,typeToConfirm=""}){
 }
 
 /* ───────── student: register ───────── */
-function openLogin(){
-  const m=openModal(headHtml("학생 로그인","아이디는 내 이름, 비밀번호는 내 학번이에요.")+`
+function openLogin(mode){
+  mode=mode==="signup"?"signup":"login";
+  const c=S.cfg;
+  const coOpts=c.cohorts.map(co=>`<option value="${esc(co.id)}" ${co.id===S.cohortSel?"selected":""}>${esc(cohortLabel(co))}</option>`).join("");
+  const teamOpts=cid=>`<option value="">우리 팀 없음</option>`+[...S.teams.values()].filter(t=>t.cohortId===cid).sort((a,b)=>a.createdAt-b.createdAt).map(t=>`<option value="${esc(t.id)}">${esc(t.name)}${t.item?" · "+esc(t.item):""}</option>`).join("");
+  const signup=mode==="signup";
+  const m=openModal(headHtml(signup?"학생 회원가입":"학생 로그인",signup?"이름과 학번만 넣으면 돼요. 다음부터는 이름(아이디)과 학번(비밀번호)으로 로그인해요.":"아이디는 내 이름, 비밀번호는 내 학번이에요.")+`
+    <div class="modal-body" style="padding-bottom:0"><div class="seg" role="tablist"><label><input type="radio" name="lg-mode" value="login" ${signup?"":"checked"}>로그인</label><label><input type="radio" name="lg-mode" value="signup" ${signup?"checked":""}>회원가입</label></div></div>
     <form class="modal-body" id="lg-form" novalidate>
-      <div class="field"><label for="lg-name">아이디 (이름)</label><input id="lg-name" type="text" maxlength="20" autocomplete="off" placeholder="예: 김민준" autofocus></div>
-      <div class="field"><label for="lg-no">비밀번호 (학번)</label><input id="lg-no" type="password" maxlength="30" inputmode="numeric" autocomplete="off" placeholder="예: 20301"></div>
+      <div class="field"><label for="lg-name">${signup?"이름":"아이디 (이름)"}</label><input id="lg-name" type="text" maxlength="20" autocomplete="off" placeholder="예: 김민준" autofocus></div>
+      <div class="field"><label for="lg-no">${signup?"학번":"비밀번호 (학번)"}</label><input id="lg-no" type="${signup?"text":"password"}" maxlength="30" inputmode="numeric" autocomplete="off" placeholder="예: 20301"></div>
+      ${signup?(c.cohorts.length?`<div class="field"><label for="lg-co">내 갤러리 (학년·학과)</label><select id="lg-co">${coOpts}</select></div>
+      <div class="field"><label for="lg-team">우리 팀</label><select id="lg-team"></select><span class="hint">우리 팀에는 투자할 수 없어요.</span></div>`
+        :`<div class="notice warn" style="margin:0"><div class="ic">!</div><div class="body"><b>아직 갤러리가 없어요</b><p>선생님이 갤러리를 만들면 가입할 수 있어요.</p></div></div>`):""}
       <div class="err" id="lg-err" role="alert"></div>
-      <span class="hint">다른 기기에서 로그인하면 그 기기로 옮겨 가요. 투자 기록은 그대로 이어져요.</span>
+      ${signup?"":`<span class="hint">다른 기기에서 로그인하면 그 기기로 옮겨 가요. 투자 기록은 그대로 이어져요.</span>`}
     </form>
-    <div class="modal-foot"><button class="btn" data-close>취소</button><button class="btn accent" id="lg-go">로그인</button></div>`);
+    <div class="modal-foot"><button class="btn" data-close>취소</button><button class="btn accent" id="lg-go" ${signup&&!c.cohorts.length?"disabled":""}>${signup?"가입하고 투자금 받기":"로그인"}</button></div>`);
+  m.querySelectorAll("input[name=lg-mode]").forEach(r=>r.addEventListener("change",()=>{const n=m.querySelector("#lg-name").value,no=m.querySelector("#lg-no").value;openLogin(r.value);const m2=$(".modal");if(m2){m2.querySelector("#lg-name").value=n;m2.querySelector("#lg-no").value=no}}));
+  const coSel=m.querySelector("#lg-co"),teamSel=m.querySelector("#lg-team");
+  if(coSel){teamSel.innerHTML=teamOpts(coSel.value);coSel.addEventListener("change",()=>{teamSel.innerHTML=teamOpts(coSel.value)})}
   const go=m.querySelector("#lg-go"),err=m.querySelector("#lg-err");
+  const claim=sid=>S.db.doc("claims/"+sid);
   const submit=async()=>{
     err.textContent="";
     const name=m.querySelector("#lg-name").value.trim();const sid=normNo(m.querySelector("#lg-no").value);
     if(!name){err.textContent="이름을 입력하세요.";return}
+    if(name.length>20){err.textContent="이름은 20자까지 입력할 수 있어요.";return}
     if(!sid){err.textContent="학번을 입력하세요.";return}
     if(!S.uid){err.textContent="접속 중이에요. 잠시 후 다시 시도하세요.";return}
-    go.disabled=true;go.textContent="로그인 중…";
+    go.disabled=true;const label=go.textContent;go.textContent=signup?"가입 중…":"로그인 중…";
+    const done=msg=>{S.sid=sid;lsSet("ir-sid",sid);if(coSel)S.cohortSel=coSel.value;subscribeStudent();closeModal();toast(msg)};
     try{
-      await withRetry(()=>S.db.doc("claims/"+sid).set({uid:S.uid,name:normName(name),at:Date.now()}));
-      S.sid=sid;lsSet("ir-sid",sid);subscribeStudent();
-      closeModal();toast(`${name}님, 환영해요`);
-    }catch(e){
-      const c=String(e&&e.code||"");
-      err.textContent=c.includes("permission-denied")?"이름 또는 학번이 맞지 않아요. 선생님이 등록한 이름과 학번을 그대로 입력하세요.":errMsg(e);
-      go.disabled=false;go.textContent="로그인";
-    }
+      if(signup){
+        const cohortId=coSel.value;const ownTeamId=teamSel.value;
+        if(!cohortById(cohortId))throw new UserError("갤러리를 고르세요.");
+        try{
+          const b=writeBatch(FB.fs);
+          b.set(doc(FB.fs,"students",sid),{name,nameKey:normName(name),studentNo:sid,cohortId,ownTeamId,createdAt:Date.now()});
+          b.set(doc(FB.fs,"claims",sid),{uid:S.uid,name:normName(name),at:Date.now()});
+          await withRetry(()=>b.commit());
+          done(`가입 완료! ${won(c.budget)}의 투자금을 받았어요`);
+        }catch(e){
+          if(!String(e&&e.code||"").includes("permission-denied"))throw e;
+          // 학번이 이미 있으면: 같은 이름이면 로그인, 아니면 거부
+          try{await withRetry(()=>claim(sid).set({uid:S.uid,name:normName(name),at:Date.now()}));done("이미 가입된 학번이라 로그인했어요")}
+          catch(e2){throw new UserError("이미 다른 이름으로 가입된 학번이에요. 학번을 확인하거나 선생님께 알려 주세요.")}
+        }
+      }else{
+        try{await withRetry(()=>claim(sid).set({uid:S.uid,name:normName(name),at:Date.now()}))}
+        catch(e){if(String(e&&e.code||"").includes("permission-denied"))throw new UserError("이름 또는 학번이 맞지 않아요. 처음이라면 ‘회원가입’을 눌러 가입하세요.");throw e}
+        done(`${name}님, 환영해요`);
+      }
+    }catch(e){err.textContent=errMsg(e);go.disabled=false;go.textContent=label}
   };
   go.addEventListener("click",submit);
   m.querySelector("#lg-form").addEventListener("submit",e=>{e.preventDefault();submit()});
+}
+function openProfileEdit(){
+  const me=S.me;if(!me)return;
+  const c=S.cfg;const ms=myState();
+  if(ms.sum>0){toast("이미 투자해서 갤러리·팀을 바꿀 수 없어요. 모든 투자를 0원으로 조정하면 바꿀 수 있어요.",true);return}
+  const teamOpts=cid=>`<option value="">우리 팀 없음</option>`+[...S.teams.values()].filter(t=>t.cohortId===cid).map(t=>`<option value="${esc(t.id)}" ${me.ownTeamId===t.id?"selected":""}>${esc(t.name)}</option>`).join("");
+  const m=openModal(headHtml("갤러리·팀 수정",`${esc(me.name)} · ${esc(me.studentNo||me.sid)}`)+`
+    <div class="modal-body">
+      <div class="field"><label for="pe-co">내 갤러리</label><select id="pe-co">${c.cohorts.map(co=>`<option value="${esc(co.id)}" ${co.id===me.cohortId?"selected":""}>${esc(cohortLabel(co))}</option>`).join("")}</select></div>
+      <div class="field"><label for="pe-team">우리 팀</label><select id="pe-team">${teamOpts(me.cohortId)}</select></div>
+      <div class="err" id="pe-err"></div>
+    </div>
+    <div class="modal-foot"><button class="btn" data-close>취소</button><button class="btn primary" id="pe-go">저장</button></div>`);
+  m.querySelector("#pe-co").addEventListener("change",e=>{m.querySelector("#pe-team").innerHTML=teamOpts(e.target.value)});
+  m.querySelector("#pe-go").addEventListener("click",async()=>{
+    const cohortId=m.querySelector("#pe-co").value,ownTeamId=m.querySelector("#pe-team").value;
+    try{await withRetry(()=>S.db.doc("students/"+S.sid).set({name:me.name,nameKey:me.nameKey,studentNo:me.studentNo,cohortId,ownTeamId,createdAt:Number(me.createdAt)||Date.now()}));S.cohortSel=cohortId;closeModal();toast("저장했어요")}
+    catch(e){m.querySelector("#pe-err").textContent=errMsg(e)}
+  });
 }
 /* ───────── student: invest ───────── */
 function openInvest(tid){
@@ -1303,7 +1349,9 @@ document.addEventListener("click",e=>{
     case "rank":S.rankSel=id;S.lastHtml="";schedule();break;
     case "stage":S.stageSel=id;S.lastHtml="";schedule();break;
     case "atab":S.adminTab=id;S.lastHtml="";schedule();break;
-    case "register":case "login":openLogin();break;
+    case "register":case "login":openLogin("login");break;
+    case "signup":openLogin("signup");break;
+    case "profile-edit":openProfileEdit();break;
     case "student-logout":studentLogout(false);toast("로그아웃했어요");break;
     case "students-add":openStudentsImport();break;
     case "student-edit":openStudentEdit(id);break;
