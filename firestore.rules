@@ -8,7 +8,7 @@ service cloud.firestore {
 
     // ▼ 관리자(선생님) 구글 계정 이메일 (소문자). firebase-config.js 의 ADMIN_EMAILS 와 같게.
     function adminEmails() {
-      return ['teacher@example.com'];
+      return ['bnlee0525@gmail.com'];
     }
 
     function signedIn() { return request.auth != null; }
