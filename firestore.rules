@@ -1,0 +1,91 @@
+rules_version = '2';
+
+// 모의창업 IR 펀딩 · Firestore 보안 규칙
+// Firebase 콘솔 › Firestore Database › 규칙 탭에 전체를 붙여넣고 [게시]를 누르세요.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ▼ 관리자(선생님) 구글 계정 이메일 (소문자). firebase-config.js 의 ADMIN_EMAILS 와 같게.
+    function adminEmails() {
+      return ['teacher@example.com'];
+    }
+
+    function signedIn() { return request.auth != null; }
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.get('email_verified', false) == true
+        && request.auth.token.get('email', '').lower() in adminEmails();
+    }
+    function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
+    function cfgPath() { return /databases/$(database)/documents/config/main; }
+    function cfg() { return get(cfgPath()).data; }
+    function resultsPublic() {
+      return exists(cfgPath())
+        && (cfg().get('showLive', true) == true || cfg().get('status', '') == 'revealed');
+    }
+
+    // 행사 설정 · 팀/발표자료: 누구나 읽고, 관리자만 쓴다
+    match /config/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /teams/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 학생 화면용 집계와 마감 결과: 금액 공개 중이거나 발표 후에만 학생이 읽는다
+    match /public/{id} {
+      allow read: if isAdmin() || (signedIn() && resultsPublic());
+      allow write: if isAdmin();
+    }
+    match /results/{id} {
+      allow read: if isAdmin() || (signedIn() && resultsPublic());
+      allow write: if isAdmin();
+    }
+
+    // 학번 점유: 한 학번(갤러리별)은 한 기기만 등록
+    match /claims/{id} {
+      allow get: if signedIn();
+      allow list: if isAdmin();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid', 'at'])
+        && request.resource.data.uid == request.auth.uid;
+      allow delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow update: if false;
+    }
+
+    // 투자자 명단: 본인과 관리자만 읽는다 (이름은 다른 학생에게 보이지 않음)
+    match /roster/{uid} {
+      allow read: if isAdmin() || isSelf(uid);
+      allow create, update: if isSelf(uid) && validRoster();
+      allow delete: if isAdmin();
+    }
+    function validRoster() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['name', 'studentNo', 'cohortId', 'ownTeamId', 'claimId', 'joinedAt'])
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 20
+        && d.studentNo is string && d.studentNo.size() > 0 && d.studentNo.size() <= 20
+        && d.cohortId is string && d.ownTeamId is string && d.claimId is string
+        && getAfter(/databases/$(database)/documents/claims/$(d.claimId)).data.uid == request.auth.uid;
+    }
+
+    // 투자 기록: 학생마다 문서 하나(자기 것만). 펀딩 진행 중에만 쓸 수 있다.
+    match /investments/{uid} {
+      allow read: if isAdmin() || isSelf(uid);
+      allow create, update: if isSelf(uid) && validInvestment();
+      allow delete: if isAdmin();
+    }
+    function validInvestment() {
+      let d = request.resource.data;
+      let r = get(/databases/$(database)/documents/roster/$(request.auth.uid)).data;
+      return exists(cfgPath()) && cfg().get('status', '') == 'open'
+        && d.keys().hasOnly(['cohortId', 'ownTeamId', 'alloc', 'updatedAt'])
+        && d.alloc is map && d.alloc.size() <= 100
+        && d.cohortId == r.cohortId
+        && d.ownTeamId == r.ownTeamId
+        && !(d.ownTeamId in d.alloc);
+    }
+  }
+}
